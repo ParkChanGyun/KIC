@@ -1,0 +1,417 @@
+package tdl_Post;
+
+//DBConnectionMgr(DB접속,관리),BoardDTO(매개변수,반환형)
+import java.sql.*;//DB사용
+import java.util.*;//ArrayList,List를 사용하기 위해서
+
+import tdl_Post.TDLPostDTO;
+import dbc.DBConnectionMgr;
+
+public class TDLPostDAO {
+
+	private DBConnectionMgr pool = null;// 1.선언
+
+	// 공통으로 접속할 경우 필요한 멤버변수
+	private Connection con = null;
+	private PreparedStatement pstmt = null;
+	private ResultSet rs = null;
+	private String sql = "";// 실행시킬 SQL 구문
+
+	// 2.생성자를 통해서 연결=>의존성
+	public TDLPostDAO() { // 생성자
+		try {
+
+			System.out.println("================TDLPost - TDLPostDAO() 시작");
+			pool = DBConnectionMgr.getInstance();
+			System.out.println("pool : " + pool);
+		} catch (Exception e) {
+			System.out.println("DB접속오류 : " + e);
+		}
+		System.out.println("================ TDLPost - TDLPostDAO() 끝");
+	}
+
+	// 1.페이징 처리를 위해서 전체 레코드수를 구해와야 한다.
+	public int getArticleCount() {
+		System.out.println("================ TDLPost  - getArticleCount() 시작");
+		int x = 0;// 레코드갯수
+
+		try {
+			con = pool.getConnection();
+			System.out.println("con : " + con);
+			sql = "select count(*) from TDL_POST";
+			pstmt = con.prepareStatement(sql);
+			rs = pstmt.executeQuery();
+			if (rs.next()) {// 보여주는 결과가 있다면
+				x = rs.getInt(1);// 변수명 = rs.get자료형(필드명 또는 인덱스번호)
+									// 필드명이 아니기때문에 select ~ from 사이에 나오는 순서
+			}
+			System.out.println("TDLPostDAO 카운트 출력성공");
+		} catch (Exception e) {
+			System.out.println("getArticleCount()메서드 에러유발 : " + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		}
+		System.out.println("================ TDLPost  - getArticleCount() 끝");
+		return x;
+	}
+
+	// 글목록보기에 대한 메서드 구현->레코드가 한개이상=>한 페이지당 10개씩 끊어서 보여준다.
+	public List getArticles(int start, int end) {// getMemberArticle(int start,int end)
+		// id asc name desc
+		System.out.println("================ TDLPost  - getArticles() 시작");
+		List articleList = null;// ArrayList articleList=null;
+
+		try {
+			con = pool.getConnection();
+//그룹번호가 가장 최신의 글을중심으로 정렬하되,만약에 level이 같은 경우에는
+//step값으로 오름차순을 통해서 몇번째 레코드 번호를 기준해서 정렬하라.
+			sql = "select * from TDL_POST order by TP_num limit ?,?";// 1,10
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, start - 1);
+			;// mysql은 레코드순번이 내부적으로 0부터 시작
+			pstmt.setInt(2, end);
+			rs = pstmt.executeQuery();
+//기존의 레코드외에 추가된 레코드를 첨부해서 다같이 보여주는 개념 -> 누적개념(벽돌) 
+			if (rs.next()) {// 레코드가 존재한다면 (최소만족 1개)
+//articleList=new List(); X
+//형식) articleList=new 자식클래스명();
+				articleList = new ArrayList(end);// 10 -> end 갯수만큼 데이터를 담을 공간생성하라
+				do {
+
+					TDLPostDTO article = makeArticleFromResult(); // 중복 메서드 만들어서 불러오기
+					/*
+					 * TDLPostDTO article = new TDLPostDTO();// MemberDTO mem=new MemberDTO();
+					 * article.setTP_num(rs.getInt("num"));//자유게시판 번호
+					 * article.setTP_title(rs.getString("TP_title"));//자유게시판 제목
+					 * article.setTP_id(rs.getString("TP_id"));// 유저아이디
+					 * article.setTP_date(rs.getString("TP_date"));// 작성일
+					 * article.setTP_content(rs.getString("TP_content")); //자유게시판 글 내용
+					 */
+//추가 
+					articleList.add(article);
+				} while (rs.next());
+			}
+		} catch (Exception e) {
+			System.out.println("TDLPostDAO getArticles()메서드 에러유발" + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		}
+		System.out.println("================ TDLPost  - getArticles() 끝");
+		return articleList;
+	}
+
+	// 페이징 처리를 재조정해주는 메서드작성(ListAction 클래스에서 불러오기)
+	// 1.화면에 보여주는 페이지 번호 2.화면에 출력할 레코드갯수
+	public Hashtable pageList(String pageNum, int count) {
+		System.out.println("================ TDLPost  - pageList() 시작");
+		// 1.페이징 처리결과를 저장할 hashtable객체를 선언
+		Hashtable<String, Integer> pgList = new Hashtable<String, Integer>();
+		// 1.Jsp에서 담당했던 자바의 코드를 여기에서 실행
+		int pageSize = 10;// numperpage; -> 페이지당 보여주는 게시물수(=레코드수) -> 20개이상
+		int blockSize = 2;// pagePerBlock -> 블럭당 보여주는 페이지수
+
+		// 페이징처리에 해당하는 환경설정을 마무리
+		// 게시판을 맨 처음 실행시키면 무조건 1페이지부터 출력
+		if (pageNum == null) {
+			pageNum = "1";// default(무조건 1페이지는 선택하지 않아도 보여줘야 되기때문에)
+		}
+		int currentPage = Integer.parseInt(pageNum);// 현재페이지 -> nowPage
+		// 시작레코드번호 -> limit ?,?
+		// (1-1)*10+1=1,(2-1)*10+1=11,(3-1)*10+1=21
+		int startRow = (currentPage - 1) * pageSize + 1;
+		int endRow = currentPage * pageSize;// 1*10=10,2*10=20,3*10=30
+		int number = 0;// beginPerPage->페이지별 시작하는 맨 처음에 나오는 게시물 번호
+		System.out.println("Hashtable pageList() 현재 레코드수(count) -> " + count);
+		number = count - (currentPage - 1) * pageSize;
+		System.out.println("Hashtable pageList() 페이지별 number : " + number);
+
+		// 총 페이지수, 시작,종료페이지 계산
+		int pageCount = count / pageSize + (count % pageSize == 0 ? 0 : 1);
+		// 2.시작페이지
+		// 블럭당 페이지수 계산->10->10배수,3->3의 배수
+		int startPage = 0;// 1,2,3,,,,10 [다음블럭 10],11,12,,,,,20
+		if (currentPage % blockSize != 0) { // 1~9,11~19,21~29,,,
+			startPage = currentPage / blockSize * blockSize + 1;
+		} else { // 10%10 (10,20,30,40~)
+					// ((10/10)-1)*10+1=1
+			startPage = ((currentPage / blockSize) - 1) * blockSize + 1;
+		}
+		int endPage = startPage + blockSize - 1;// 1+10-1=10
+		System.out.println("startPage=" + startPage + ",endPage=>" + endPage);
+		// 블럭별로 구분해서 링크걸어서 출력
+		if (endPage > pageCount)
+			endPage = pageCount;// 마지막페이지=총페이지수
+		// 페이징 처리에 대한 계산결과 -> Hashtable -> ListAction 전달 -> request -> list.jsp출력
+		// ~DAO -> 실질적인 업무에 관련된 코딩-> 액션클래스로 전달 -> view(jsp)에 최종출력
+		pgList.put("pageSize", pageSize);// <-> pgList.get("pageSize")
+		pgList.put("blockSize", blockSize);
+		pgList.put("currentPage", currentPage);
+		pgList.put("startRow", startRow);
+		pgList.put("endRow", endRow);
+		pgList.put("count", count);
+		pgList.put("number", number);
+		pgList.put("startPage", startPage);
+		pgList.put("endPage", endPage);
+		pgList.put("pageCount", pageCount);
+		System.out.println("================ TDLPost  - pageList() 끝");
+		return pgList;
+	}
+
+///////추가(1) 검색분야에 따른 검색어를 입력했을때 조건에 만족하는 레코드갯수가 필요
+
+	public int getArticleSearchCount(String search, String searchtext) {
+		System.out.println("================ TDLPost  - getArticleSearchCount() 시작");
+		int x = 0;// 레코드갯수
+		try {
+			con = pool.getConnection();
+			System.out.println("con : " + con);
+			// 검색어를 입력하지 않은경우(검색분야 선택x)
+
+			if (search == null || search == "") {
+				sql = "select count(*) from TDL_POST";
+			} else { // 검색분야(제목,작성자,제목+본문)
+				if (search.contentEquals("subject_content")) {
+					sql = "select count(*) from TDL_POST where TP_title like '%" + searchtext
+							+ "%' or TP_content like '%" + searchtext + "%'";
+				} else { // 제목, 작성자 -> 매개변수를 이용해서 하나의 sql 통합
+					sql = "select count(*) from TDL_POST where " + search + " like '%" + searchtext + "%' ";
+				}
+			}
+			System.out.println("getArticleSearchCount 의 검색어 sql=>" + sql);
+			// ----------------------------------------------------------------------
+			pstmt = con.prepareStatement(sql);
+			rs = pstmt.executeQuery();
+			if (rs.next()) {// 보여주는 결과가 있다면
+				x = rs.getInt(1);// 변수명 = rs.get자료형(필드명 또는 인덱스번호)
+									// 필드명이 아니기때문에 select ~ from 사이에 나오는 순서
+			}
+		} catch (Exception e) {
+			System.out.println("getArticleSearchCount()메서드 에러유발 : " + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		}
+		System.out.println("================ TDLPost  - getArticleSearchCount() 끝");
+		return x;
+	}
+
+	public List getTDLArticles(int start, int end, String search, String searchtext) {// getMemberArticle(int start,int
+																						// end)
+		// id asc name desc
+		System.out.println("================ TDLPost  - getTDLArticles() 시작");
+		List articleList = null;// ArrayList articleList=null;
+		try {
+			con = pool.getConnection();
+			// -----------------------------------------------------------------------------
+			if (search == null || search == "") {
+				sql = "select * from TDL_POST order by TP_num desc limit ?,?";// 1,10
+			} else {
+				if (search.contentEquals("subject_content")) {
+					sql = "select * from TDL_POST where TP_title like '%" + searchtext + "%' or TP_content like '%"
+							+ searchtext + "%' order by TP_num desc limit ?,?";
+				} else { // 제목, 작성자 -> 매개변수를 이용해서 하나의 sql 통합
+					sql = "select * from TDL_POST where " + search + " like '%" + searchtext
+							+ "%' order by TP_num desc limit ?,?";
+				}
+			}
+			System.out.println("TDLPost getTDLArticles()의 sql => " + sql);
+			// -----------------------------------------------------------------------------
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, start - 1);
+			;// mysql은 레코드순번이 내부적으로 0부터 시작
+			pstmt.setInt(2, end);
+			rs = pstmt.executeQuery();
+//기존의 레코드외에 추가된 레코드를 첨부해서 다같이 보여주는 개념 -> 누적개념(벽돌) 
+			if (rs.next()) {// 레코드가 존재한다면 (최소만족 1개)
+//articleList=new List(); X
+//형식) articleList=new 자식클래스명();
+				articleList = new ArrayList(end);// 10 -> end 갯수만큼 데이터를 담을 공간생성하라
+				do {
+					TDLPostDTO article = makeArticleFromResult();
+					articleList.add(article);
+				} while (rs.next());
+			}
+		} catch (Exception e) {
+			System.out.println("getArticles()메서드 에러유발" + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		}
+		System.out.println("================ TDLPost  - getTDLArticles() 끝");
+		return articleList;
+	}
+
+	// 작성일 구하기
+	// ---------------------------------------------------------------------------------------------------------
+	public String getTP_date() {
+		System.out.println("================ TDLPost  - getTP_date() 시작");
+		String SQL = "SELECT NOW()";
+		try {
+			PreparedStatement pstmt = con.prepareStatement(SQL);
+			rs = pstmt.executeQuery();
+			if (rs.next()) {
+				return rs.getString(1);
+			}
+		} catch (Exception e) {
+			System.out.print("TDLPostDAO getTP_date() 에러유발  ->");
+			e.printStackTrace();
+		}
+		System.out.println("================ TDLPost  - getTP_date() 끝");
+		return ""; // 데이터베이스 오류
+	}
+
+	// ---------------게시판의 글쓰기 및 글
+	// 답변달기-------------------------------------------------------------------------
+	// insert into board values(?,,,
+	public void insertArticle(TDLPostDTO article) {// ~(MemberDTO mem)
+		System.out.println("================ TDLPost  - insertArticle() 시작");
+		// 1.article -> 신규글인지 답변글인지 구분
+		int TP_num = article.getTP_num();// 0(신규글인지) 0이 아닌 경우(답변글)
+		// 테이블에 입력할 게시물 번호를 저장할 변수
+		int number = 0;
+		System.out.println("insertArticle 메서드의 내부의 num : " + TP_num);
+		try {
+			con = pool.getConnection();
+			sql = "select max(TP_num) from TDL_POST";// 최대값+1=실제 저장할 게시물번호
+			pstmt = con.prepareStatement(sql);
+			rs = pstmt.executeQuery();
+			if (rs.next()) {
+				number = rs.getInt(1) + 1;
+			} else {// 맨 처음에 레코드가 한개라도 없다면
+				number = 1;
+			}
+			System.out.println("insertArticle()의 날짜 값 ->" + getTP_date());
+			// 12개 -> num,reg_date,reaconut(생략 -> default -> sysdate.now() <- mysql
+			sql = "insert into TDL_POST(TP_num,TP_title,TP_id,TP_date,TP_content)";
+			sql += "values(?,?,?,?,?)";
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, number);
+			pstmt.setString(2, article.getTP_title());// 웹에서는 Setter Method를 메모리에 저장
+			pstmt.setString(3, article.getTP_id());
+			pstmt.setString(4, getTP_date());// 작성날짜
+			pstmt.setString(5, article.getTP_content());// 글내용
+			int insert = pstmt.executeUpdate();
+			System.out.println("TDLPostDAO 게시판의 글쓰기 성공유무(insert) : " + insert);
+		} catch (Exception e) {
+			System.out.println("TDLPostDAO insertArticle()메서드 에러유발 : " + e);
+			e.printStackTrace();
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		} // finally
+		System.out.println("================ TDLPost  - insertArticle() 끝");
+	}
+
+	// ------------업데이트-----------------------
+
+	public TDLPostDTO getArticle(int TP_num) {
+		System.out.println("================ TDLPost  - TDLPostDTO getArticle() 시작");
+		TDLPostDTO article = null;
+		try {
+			con = pool.getConnection();
+			sql = "update TDL_POST set TP_readcount = TP_readcount+1 where TP_num=?";
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, TP_num);
+			int update = pstmt.executeUpdate();
+			System.out.println("TDLPOST - getArticle 조회수 증가유무(update) : " + update);
+			con = pool.getConnection();
+			sql = "select * from TDL_POST where TP_num=?";
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, TP_num);
+			rs = pstmt.executeQuery();
+			if (rs.next()) {// 레코드가 존재한다면
+				article = makeArticleFromResult();
+			}
+		} catch (Exception e) {
+			System.out.println(" getArticle()메서드 에러유발" + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		}
+		System.out.println("================ TDLPost  - TDLPostDTO getArticle() 끝");
+		return article;
+	}
+	// 게시판의 글수정하기 업데이트
+
+	// 업데이트 할 자유게시판 게시물을 보여주기==============================
+	public TDLPostDTO updateGetArticle(int TP_num) { // updateForm.jsp에서 출력
+		System.out.println("================ TDLPost  - TDLPostDTO updateGetArticle() 시작");
+		TDLPostDTO article = null;
+		try {
+			con = pool.getConnection();
+			sql = "select * from TDL_POST where TP_num=?";
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, TP_num);
+			rs = pstmt.executeQuery();
+			if (rs.next()) {// 레코드가 존재한다면
+				article = makeArticleFromResult();
+			}
+		} catch (Exception e) {
+			System.out.println("TDLPostDAO updateGetArticle()메서드 에러유발" + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);
+		}
+		System.out.println("================ TDLPost  - TDLPostDTO updateGetArticle() 끝");
+		return article;
+	}
+
+	// 자유게시판 내용 수정시켜 저장하는 구문 ============================
+	public int updateArticle(TDLPostDTO article) {
+		System.out.println("================ TDLPost  -  updateArticle() 시작");
+		int x = -1;// 게시물의 수정성공유무
+		try {
+			System.out.println("업데이트아티클updateArticle() " + article.getTP_title());
+			System.out.println("업데이트아티클updateArticle() " + article.getTP_content());
+			System.out.println("업데이트아티클updateArticle() " + article.getTP_num());
+			con = pool.getConnection();
+			sql = "update TDL_POST set TP_title=?,TP_content=? where TP_num=?";
+			pstmt = con.prepareStatement(sql);
+			pstmt.setString(1, article.getTP_title());
+			pstmt.setString(2, article.getTP_content());
+			pstmt.setInt(3, article.getTP_num());
+			int update = pstmt.executeUpdate();
+			System.out.println("TDLPostDAO 게시판의 글수정 성공유무(update) : " + update);// 1성공
+			x = 1;
+		} catch (Exception e) {
+			System.out.println("TDLPostDAO updateArticle()메서드 에러유발 : " + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);// 암호를 찾기 때문에
+		}
+		System.out.println("================ TDLPost  -  updateArticle() 끝");
+		return x;
+	}
+
+	// 글 삭제시켜주는 메서드 -> 회원탈퇴(삭제)=>암호를 물어본다.=> deleteArticle
+	public int deleteArticle(int TP_num) {
+		System.out.println("================ TDLPost  -  deleteArticle() 시작");
+		int x = -1;// 게시물의 수정성공유무
+		try {
+			con = pool.getConnection();
+
+			sql = "delete from TDL_POST where TP_num=?";
+			pstmt = con.prepareStatement(sql);
+			pstmt.setInt(1, TP_num);
+			int delete = pstmt.executeUpdate();
+			System.out.println("TDLPostDAO 게시판의 글수정 성공유무(delete) : " + delete);// 1성공
+			x = 1;
+			// if(rs.next()); -> x=-1;
+		} catch (Exception e) {
+			System.out.println("TDLPostDAO deleteArticle()메서드 에러유발 : " + e);
+		} finally {
+			pool.freeConnection(con, pstmt, rs);// 암호를 찾기 때문에
+		}
+		System.out.println("================ TDLPost  -  deleteArticle() 끝");
+		return x;
+
+	}
+
+	// 반복되는 코딩 줄이기
+	private TDLPostDTO makeArticleFromResult() throws Exception {
+
+		TDLPostDTO article = new TDLPostDTO();// MemberDTO mem=new MemberDTO();
+		article.setTP_num(rs.getInt("TP_num"));// 자유게시판 번호
+		article.setTP_title(rs.getString("TP_title"));// 자유게시판 제목
+		article.setTP_id(rs.getString("TP_id"));// 유저아이디
+		article.setTP_date(rs.getString("TP_date"));// 작성일
+		article.setTP_content(rs.getString("TP_content")); // 자유게시판 글 내용
+		article.setTP_readcount(rs.getInt("TP_readcount"));// 조회수
+		return article;
+	}
+
+}
