@@ -34,7 +34,7 @@ public class TDLPostDAO {
 	public int getArticleCount() {
 		System.out.println("================ TDLPost  - getArticleCount() 시작");
 		int x = 0;// 레코드갯수
-
+ 
 		try {
 			con = pool.getConnection();
 			System.out.println("con : " + con);
